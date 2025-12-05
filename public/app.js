@@ -294,7 +294,6 @@ function showAppInterface() {
 }
 
 // --- 3. ACTION FUNCTIONS ---
-
 async function saveInventoryItem(itemData) {
     try {
         const { db, collection, addDoc, updateDoc, doc } = window;
@@ -475,9 +474,15 @@ async function approveRequest(requestCode, approvedItems) {
     showLoading();
     try {
         const { db, doc, runTransaction } = window;
+        
+        // 1. ✅ ย้ายมาสร้างตัวแปรตรงนี้ (ก่อนเข้า Transaction)
+        const approvedString = approvedItems.map(i => `${i.itemName} (x${i.quantity})`).join(', ');
+
         const request = dispenseHistoryCache.find(r => r.RequestCode === requestCode);
         if(!request) throw new Error("Request not found");
+        
         const requestRef = doc(db, COLLECTIONS.TRANSACTIONS, request.id);
+
         await runTransaction(db, async (transaction) => {
             for (const item of approvedItems) {
                 const invItem = ppeItemsCache.find(i => i.code === item.itemCode || i.name === item.itemName); 
@@ -490,24 +495,27 @@ async function approveRequest(requestCode, approvedItems) {
                     }
                 }
             }
-            const approvedString = approvedItems.map(i => `${i.itemName} (x${i.quantity})`).join(', ');
+            
             transaction.update(requestRef, {
                 status: 'Approved',
-                approvedItemsString: approvedString,
+                approvedItemsString: approvedString, // ใช้ตัวแปรที่สร้างไว้ด้านบน
                 approver: currentUser.email,
                 approvalDate: new Date()
             });
         });
 
-        // 🔥 [เพิ่มตรงนี้] สั่งแจ้งเตือนไลน์เมื่ออนุมัติ
+        // 🔥 แจ้งเตือน LINE (ตอนนี้จะมองเห็น approvedString แล้ว)
         let msg = `✅ อนุมัติแล้ว!\nรหัส: ${requestCode}\nรายการ: ${approvedString}`;
         await sendLineNotification(msg);
         // ---------------------------------------------
 
-        alert("✅ อนุมัติสำเร็จ"); // (บรรทัดเดิม)
+        alert("✅ อนุมัติสำเร็จ");
         closeModal('approval-modal');
         refreshAllData();
-    } catch (e) { alert("Error: " + e.message); hideLoading(); }
+    } catch (e) { 
+        alert("Error: " + e.message); 
+        hideLoading(); 
+    }
 }
 
 async function confirmPickup(requestCode) {
@@ -608,8 +616,6 @@ async function processReceiveForm(formData) {
     showLoading();
     try {
         const { db, collection, doc, runTransaction } = window;
-
-        // 1. สร้างรายการของเป็นข้อความเตรียมไว้ก่อน (ใช้ทั้งบันทึก DB และส่งไลน์)
         const itemsString = formData.items.map(i => `${i.itemName} (x${i.quantity})`).join(', ');
 
         await runTransaction(db, async (transaction) => {
@@ -622,24 +628,26 @@ async function processReceiveForm(formData) {
                     transaction.update(invRef, { totalQuantity: newQty });
                 }
             }
-            
             const newLogRef = doc(collection(db, COLLECTIONS.RECEIVE_LOGS));
             transaction.set(newLogRef, {
                 receiveCode: formData.receiveCode,
                 receiveDate: formData.receiveDate,
                 receiverName: formData.receiverName,
-                itemsString: itemsString, // ใช้ตัวแปรที่สร้างไว้ด้านบน
+                itemsString: itemsString,
                 timestamp: new Date()
             });
         });
 
-        // 🔥 [เพิ่มส่วนนี้] แจ้งเตือน LINE เมื่อรับของเข้า (Stock In)
-        // หมายเหตุ: ถ้าต้องการส่งเข้า "กลุ่ม" ต้องเอา Group ID มาใส่ในช่องพารามิเตอร์ที่ 2
-        // เช่น await sendLineNotification(msg, 'Cxxxxxxxxxxxx...'); 
-        // ถ้าไม่ใส่ จะส่งไปหา ID ส่วนตัวที่คุณตั้งไว้ในฟังก์ชัน sendLineNotification
+        // ----------------------------------------------------
+        // 🔥 แก้ไขตรงนี้ครับ
+        // ----------------------------------------------------
         let msg = `🚚 รับของเข้าคลัง (Stock In)\nรหัส: ${formData.receiveCode}\nผู้รับ: ${formData.receiverName}\nรายการ: ${itemsString}`;
         
-        await sendLineNotification(msg); 
+        // ⚠️ แทนที่ 'Cxxxxxxxxxxxxxxxxxxxx' ด้วย Group ID จริงของคุณ
+        // อย่าลืมเครื่องหมาย ' ' ครอบรหัสด้วยนะครับ
+        const myGroupId = 'C88dc23a4e00d61db1632afa6e22db8b3'; 
+        
+        await sendLineNotification(msg, myGroupId); 
         // ----------------------------------------------------
 
         alert("✅ บันทึกรับของสำเร็จ");
@@ -1132,11 +1140,25 @@ function renderDispenseHistory(history) {
 function renderPendingRequests(requests) {
     const container = document.getElementById('pending-requests-list');
     if(!container) return;
+    
     if (requests.length === 0) {
         container.innerHTML = '<p class="text-center text-gray-500 p-4">ไม่มีคำขอที่รออนุมัติ</p>';
         return;
     }
-    container.innerHTML = requests.map(row => `
+
+    // 🔥 ส่วนหัวที่มีปุ่ม "อนุมัติทั้งหมด"
+    let html = `
+        <div class="flex justify-between items-center mb-4 px-2">
+            <span class="text-sm text-gray-500">รออนุมัติ ${requests.length} รายการ</span>
+            <button onclick="window.approveAllPending()" class="bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-2 rounded-lg shadow hover:shadow-lg transition text-sm flex items-center gap-2">
+                <i class="fas fa-check-double"></i> อนุมัติทั้งหมด
+            </button>
+        </div>
+        <div class="space-y-3">
+    `;
+
+    // Loop รายการเดิม
+    html += requests.map(row => `
         <div class="bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition">
             <div class="flex justify-between items-start mb-2">
                 <div>
@@ -1152,15 +1174,50 @@ function renderPendingRequests(requests) {
                 <strong>รายการ:</strong> ${row.Items}
             </div>
         </div>`).join('');
+    
+    html += `</div>`; // ปิด div wrapper
+    container.innerHTML = html;
 }
 
 function renderPickupList(requests) {
     const container = document.getElementById('pickup-list');
-    if(!container) return;
-    if (requests.length === 0) {
+    if(!container) return; // หมายเหตุ: Container นี้ใน HTML เดิมเป็น <tbody> ต้องระวัง
+
+    // เนื่องจาก pickup-list เป็น tbody เราไม่สามารถยัด div ปุ่มเข้าไปตรงๆ ได้ง่ายๆ 
+    // ผมแนะนำให้คุณสร้างปุ่มแยกไว้ใน HTML เหนือตาราง หรือใช้วิธีแทรกแถวพิเศษ
+    // แต่วิธีที่ง่ายที่สุดคือ เช็คว่ามีรายการไหม ถ้ามี ให้แสดงปุ่มที่ "นอกตาราง" 
+    
+    // --- วิธีแก้: สั่งให้แสดง/ซ่อนปุ่ม Global ที่เราจะสร้างเพิ่ม ---
+    const btnArea = document.getElementById('bulk-action-area');
+    if (requests.length > 0) {
+        if(!btnArea) {
+            // ถ้ายังไม่มีปุ่ม ให้สร้างขึ้นมาเหนือตาราง (Hack UI นิดหน่อย)
+            const tableParent = container.parentElement.parentElement; // table -> div wrapper
+            const div = document.createElement('div');
+            div.id = 'bulk-action-area';
+            div.className = "flex justify-end mb-2 p-2";
+            div.innerHTML = `
+                <button onclick="window.confirmPickupAll()" class="bg-yellow-500 text-white px-4 py-2 rounded shadow hover:bg-yellow-600 transition flex items-center gap-2">
+                    <i class="fas fa-tasks"></i> ตัดยอดทั้งหมด (${requests.length})
+                </button>
+            `;
+            tableParent.insertBefore(div, tableParent.firstChild);
+        } else {
+             // อัปเดตตัวเลข
+             btnArea.innerHTML = `
+                <button onclick="window.confirmPickupAll()" class="bg-yellow-500 text-white px-4 py-2 rounded shadow hover:bg-yellow-600 transition flex items-center gap-2">
+                    <i class="fas fa-tasks"></i> ตัดยอดทั้งหมด (${requests.length})
+                </button>
+            `;
+             btnArea.style.display = 'flex';
+        }
+    } else {
+        if(btnArea) btnArea.style.display = 'none';
         container.innerHTML = '<tr><td colspan="6" class="text-center p-4 text-gray-500">ไม่มีรายการรอรับของ</td></tr>';
         return;
     }
+
+    // Render แถวตารางปกติ
     container.innerHTML = requests.map(row => `
         <tr class="hover:bg-yellow-50 border-b">
             <td class="p-3 w-12"><input type="checkbox" class="pickup-checkbox h-5 w-5" data-code="${row.RequestCode}"></td>
@@ -1278,6 +1335,121 @@ function initSignaturePad(canvasId) {
     }
     return null;
 }
+
+// ========================================== //
+// ==  ฟังก์ชันเสริม: จัดการแบบกลุ่ม (Batch)  == //
+// ========================================== //
+
+// 1. ฟังก์ชันอนุมัติทั้งหมด (เฉพาะรายการที่ของพอ)
+async function approveAllPending() {
+    if (!currentUser || currentUser.role !== 'Admin') return alert("ไม่มีสิทธิ์ใช้งาน");
+    
+    // หาบิลที่รออนุมัติทั้งหมด
+    const pendingReqs = dispenseHistoryCache.filter(r => r.Status === 'Pending');
+    if (pendingReqs.length === 0) return alert("ไม่มีรายการรออนุมัติ");
+
+    if (!confirm(`ยืนยันที่จะอนุมัติทั้งหมด ${pendingReqs.length} รายการ?\n(ระบบจะข้ามรายการที่สต็อกไม่พอ)`)) return;
+
+    showLoading();
+    let successCount = 0;
+    let failCount = 0;
+
+    try {
+        const { db, doc, runTransaction } = window;
+
+        // วนลูปทำทีละรายการ (เพื่อความชัวร์เรื่องตัดสต็อก)
+        for (const req of pendingReqs) {
+            try {
+                await runTransaction(db, async (transaction) => {
+                    const requestRef = doc(db, COLLECTIONS.TRANSACTIONS, req.id);
+                    
+                    // เตรียมรายการของที่จะอนุมัติ (สมมติว่าให้หมดตามที่ขอ)
+                    const itemsToApprove = [];
+                    
+                    // เช็คสต็อกทุกชิ้นในบิลนี้
+                    for (const item of req.RawItems) {
+                        const invItem = ppeItemsCache.find(i => i.code === item.itemCode || i.name === item.itemName);
+                        if (!invItem) throw new Error(`ไม่พบสินค้า ${item.itemName}`);
+                        
+                        const invRef = doc(db, COLLECTIONS.INVENTORY, invItem.id);
+                        const invDoc = await transaction.get(invRef);
+                        
+                        if (!invDoc.exists()) throw new Error("ไม่พบข้อมูลสินค้าใน DB");
+                        
+                        const currentStock = invDoc.data().totalQuantity || 0;
+                        if (currentStock < item.quantity) {
+                            throw new Error(`สินค้า ${item.itemName} หมด/ไม่พอ (เหลือ ${currentStock})`);
+                        }
+
+                        // ถ้าพอ ก็ตัดสต็อกเลย
+                        transaction.update(invRef, { totalQuantity: currentStock - item.quantity });
+                        itemsToApprove.push(item);
+                    }
+
+                    // อัปเดตสถานะบิล
+                    const approvedString = itemsToApprove.map(i => `${i.itemName} (x${i.quantity})`).join(', ');
+                    transaction.update(requestRef, {
+                        status: 'Approved',
+                        approvedItemsString: approvedString,
+                        approver: currentUser.email,
+                        approvalDate: new Date()
+                    });
+                });
+                successCount++;
+            } catch (err) {
+                console.warn(`ข้ามบิล ${req.RequestCode}: ${err.message}`);
+                failCount++;
+            }
+        }
+
+        alert(`✅ ดำเนินการเสร็จสิ้น\n- สำเร็จ: ${successCount} รายการ\n- ไม่สำเร็จ (ของหมด): ${failCount} รายการ`);
+        refreshAllData();
+
+    } catch (e) {
+        console.error(e);
+        alert("Error: " + e.message);
+    } finally {
+        hideLoading();
+    }
+}
+
+// 2. ฟังก์ชันตัดยอดทั้งหมด (เปลี่ยนสถานะ Approved -> Completed)
+async function confirmPickupAll() {
+    if (!currentUser || currentUser.role !== 'Admin') return alert("ไม่มีสิทธิ์ใช้งาน");
+
+    const approvedReqs = dispenseHistoryCache.filter(r => r.Status === 'Approved');
+    if (approvedReqs.length === 0) return alert("ไม่มีรายการรอตัดยอด");
+
+    if (!confirm(`ยืนยันตัดยอด (รับของแล้ว) ทั้งหมด ${approvedReqs.length} รายการ?`)) return;
+
+    showLoading();
+    try {
+        const { db, doc, writeBatch } = window;
+        
+        // ใช้ Batch Write เพื่อความเร็ว (รวดเดียวจบ)
+        const batch = writeBatch(db);
+        
+        approvedReqs.forEach(req => {
+            const ref = doc(db, COLLECTIONS.TRANSACTIONS, req.id);
+            batch.update(ref, { status: 'Completed' });
+        });
+
+        await batch.commit();
+
+        alert(`✅ ตัดยอดสำเร็จทั้งหมด ${approvedReqs.length} รายการ`);
+        refreshAllData();
+
+    } catch (e) {
+        console.error(e);
+        alert("Error: " + e.message);
+    } finally {
+        hideLoading();
+    }
+}
+
+// อย่าลืม Expose ให้ HTML เรียกใช้ได้
+window.approveAllPending = approveAllPending;
+window.confirmPickupAll = confirmPickupAll;
 
 // --- 5. SETUP LISTENERS ---
 
