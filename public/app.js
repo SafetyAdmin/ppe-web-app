@@ -570,7 +570,11 @@ async function processConfirmPickup(requestCode) {
             // 2. อัปเดตสถานะใน Firebase เป็น Completed
             await updateDoc(doc(db, COLLECTIONS.TRANSACTIONS, request.id), { status: 'Completed' });
 
-            // ❌ ส่วนแจ้งเตือน LINE ถูกลบออกแล้วครับ (เงียบกริบ)
+            // 🔥 [เพิ่มใหม่] สั่งแจ้งเตือนไลน์เมื่อรับของเสร็จสิ้น
+            let msg = `📦 รับของเรียบร้อยแล้ว (Completed)\nรหัส: ${requestCode}\nผู้รับ: ${request.Requester}\nรายการ: ${request.ApprovedItems || request.Items}`;
+            
+            await sendLineNotification(msg); 
+            // ---------------------------------------------
 
             alert("✅ ตัดยอดสำเร็จ");
             closeModal('confirmation-modal');
@@ -604,6 +608,10 @@ async function processReceiveForm(formData) {
     showLoading();
     try {
         const { db, collection, doc, runTransaction } = window;
+
+        // 1. สร้างรายการของเป็นข้อความเตรียมไว้ก่อน (ใช้ทั้งบันทึก DB และส่งไลน์)
+        const itemsString = formData.items.map(i => `${i.itemName} (x${i.quantity})`).join(', ');
+
         await runTransaction(db, async (transaction) => {
             for (const item of formData.items) {
                 const invItem = ppeItemsCache.find(i => i.code === item.itemCode);
@@ -614,20 +622,33 @@ async function processReceiveForm(formData) {
                     transaction.update(invRef, { totalQuantity: newQty });
                 }
             }
-            const itemsString = formData.items.map(i => `${i.itemName} (x${i.quantity})`).join(', ');
+            
             const newLogRef = doc(collection(db, COLLECTIONS.RECEIVE_LOGS));
             transaction.set(newLogRef, {
                 receiveCode: formData.receiveCode,
                 receiveDate: formData.receiveDate,
                 receiverName: formData.receiverName,
-                itemsString: itemsString,
+                itemsString: itemsString, // ใช้ตัวแปรที่สร้างไว้ด้านบน
                 timestamp: new Date()
             });
         });
+
+        // 🔥 [เพิ่มส่วนนี้] แจ้งเตือน LINE เมื่อรับของเข้า (Stock In)
+        // หมายเหตุ: ถ้าต้องการส่งเข้า "กลุ่ม" ต้องเอา Group ID มาใส่ในช่องพารามิเตอร์ที่ 2
+        // เช่น await sendLineNotification(msg, 'Cxxxxxxxxxxxx...'); 
+        // ถ้าไม่ใส่ จะส่งไปหา ID ส่วนตัวที่คุณตั้งไว้ในฟังก์ชัน sendLineNotification
+        let msg = `🚚 รับของเข้าคลัง (Stock In)\nรหัส: ${formData.receiveCode}\nผู้รับ: ${formData.receiverName}\nรายการ: ${itemsString}`;
+        
+        await sendLineNotification(msg); 
+        // ----------------------------------------------------
+
         alert("✅ บันทึกรับของสำเร็จ");
         closeModal('receive-modal');
         refreshAllData();
-    } catch (e) { alert("Error: " + e.message); hideLoading(); }
+    } catch (e) { 
+        alert("Error: " + e.message); 
+        hideLoading(); 
+    }
 }
 
 async function processWalkInDispense(walkInData) {
