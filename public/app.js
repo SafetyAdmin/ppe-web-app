@@ -188,6 +188,9 @@ async function refreshAllData() {
         
         // 7. เติม Dropdown แผนก
         populateHistoryDepartmentFilter(departmentsCache);
+        populateDepartmentDropdown(departmentsCache, 'dispense-department'); // ของหน้าเบิกปกติ
+        populateDepartmentDropdown(departmentsCache, 'walkin-department');   // ของหน้า Walk-in (เพิ่มบรรทัดนี้)
+
         populateAdjustmentDropdown();
         populateReportItemDropdown();
 
@@ -1146,69 +1149,71 @@ function renderPendingRequests(requests) {
         return;
     }
 
-    // 🔥 ส่วนหัวที่มีปุ่ม "อนุมัติทั้งหมด"
+    // ปุ่มเปลี่ยนเป็น "อนุมัติรายการที่เลือก"
     let html = `
-        <div class="flex justify-between items-center mb-4 px-2">
-            <span class="text-sm text-gray-500">รออนุมัติ ${requests.length} รายการ</span>
-            <button onclick="window.approveAllPending()" class="bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-2 rounded-lg shadow hover:shadow-lg transition text-sm flex items-center gap-2">
-                <i class="fas fa-check-double"></i> อนุมัติทั้งหมด
+        <div class="flex justify-between items-center mb-4 px-2 bg-white p-2 rounded shadow-sm sticky top-0 z-10 border">
+            <div class="flex items-center gap-2">
+                <input type="checkbox" onchange="document.querySelectorAll('.pending-checkbox').forEach(c => c.checked = this.checked)" class="h-5 w-5 cursor-pointer">
+                <span class="text-sm text-gray-600 font-bold">เลือกทั้งหมด</span>
+            </div>
+            <button onclick="window.approveSelected()" class="bg-blue-600 text-white px-4 py-2 rounded-lg shadow hover:bg-blue-700 transition text-sm flex items-center gap-2">
+                <i class="fas fa-check-square"></i> อนุมัติที่เลือก
             </button>
         </div>
         <div class="space-y-3">
     `;
 
-    // Loop รายการเดิม
     html += requests.map(row => `
-        <div class="bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition">
-            <div class="flex justify-between items-start mb-2">
-                <div>
-                    <h4 class="font-bold text-gray-800">${row.Requester} <span class="text-sm font-normal text-gray-500">(${row.Department})</span></h4>
-                    <p class="text-xs text-gray-400">วันที่ขอ: ${row.Timestamp.toLocaleDateString('th-TH')}</p>
-                </div>
-                <div class="flex gap-2">
-                    <button onclick="window.approveProcess('${row.RequestCode}', '${row.id}')" class="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600">อนุมัติ</button>
-                    <button onclick="window.rejectProcess('${row.RequestCode}')" class="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600">ปฏิเสธ</button>
-                </div>
+        <div class="bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition flex gap-3">
+            <div class="pt-1">
+                <input type="checkbox" class="pending-checkbox h-5 w-5 cursor-pointer" data-code="${row.RequestCode}">
             </div>
-            <div class="bg-gray-50 p-2 rounded text-sm border">
-                <strong>รายการ:</strong> ${row.Items}
+            
+            <div class="flex-grow">
+                <div class="flex justify-between items-start mb-2">
+                    <div>
+                        <h4 class="font-bold text-gray-800">${row.Requester} <span class="text-sm font-normal text-gray-500">(${row.Department})</span></h4>
+                        <p class="text-xs text-gray-400">วันที่ขอ: ${row.Timestamp.toLocaleDateString('th-TH')}</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="window.approveProcess('${row.RequestCode}', '${row.id}')" class="px-2 py-1 bg-gray-100 text-green-600 border border-green-200 rounded text-xs hover:bg-green-50">อนุมัติ</button>
+                        <button onclick="window.rejectProcess('${row.RequestCode}')" class="px-2 py-1 bg-gray-100 text-red-600 border border-red-200 rounded text-xs hover:bg-red-50">ปฏิเสธ</button>
+                    </div>
+                </div>
+                <div class="bg-gray-50 p-2 rounded text-sm border">
+                    <strong>รายการ:</strong> ${row.Items}
+                </div>
             </div>
         </div>`).join('');
     
-    html += `</div>`; // ปิด div wrapper
+    html += `</div>`;
     container.innerHTML = html;
 }
 
 function renderPickupList(requests) {
     const container = document.getElementById('pickup-list');
-    if(!container) return; // หมายเหตุ: Container นี้ใน HTML เดิมเป็น <tbody> ต้องระวัง
+    if(!container) return;
 
-    // เนื่องจาก pickup-list เป็น tbody เราไม่สามารถยัด div ปุ่มเข้าไปตรงๆ ได้ง่ายๆ 
-    // ผมแนะนำให้คุณสร้างปุ่มแยกไว้ใน HTML เหนือตาราง หรือใช้วิธีแทรกแถวพิเศษ
-    // แต่วิธีที่ง่ายที่สุดคือ เช็คว่ามีรายการไหม ถ้ามี ให้แสดงปุ่มที่ "นอกตาราง" 
-    
-    // --- วิธีแก้: สั่งให้แสดง/ซ่อนปุ่ม Global ที่เราจะสร้างเพิ่ม ---
     const btnArea = document.getElementById('bulk-action-area');
     if (requests.length > 0) {
         if(!btnArea) {
-            // ถ้ายังไม่มีปุ่ม ให้สร้างขึ้นมาเหนือตาราง (Hack UI นิดหน่อย)
-            const tableParent = container.parentElement.parentElement; // table -> div wrapper
+            const tableParent = container.parentElement.parentElement;
             const div = document.createElement('div');
             div.id = 'bulk-action-area';
-            div.className = "flex justify-end mb-2 p-2";
+            div.className = "flex justify-between items-center mb-2 p-2 bg-gray-50 rounded border";
+            // เพิ่มปุ่ม "เลือกทั้งหมด" และปุ่ม "ตัดยอดที่เลือก"
             div.innerHTML = `
-                <button onclick="window.confirmPickupAll()" class="bg-yellow-500 text-white px-4 py-2 rounded shadow hover:bg-yellow-600 transition flex items-center gap-2">
-                    <i class="fas fa-tasks"></i> ตัดยอดทั้งหมด (${requests.length})
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" onchange="document.querySelectorAll('.pickup-checkbox').forEach(c => c.checked = this.checked)" class="h-5 w-5 cursor-pointer">
+                    <span class="text-sm font-bold text-gray-600">เลือกทั้งหมด</span>
+                </div>
+                <button onclick="window.confirmPickupSelected()" class="bg-yellow-500 text-white px-4 py-2 rounded shadow hover:bg-yellow-600 transition flex items-center gap-2">
+                    <i class="fas fa-boxes"></i> ตัดยอดที่เลือก
                 </button>
             `;
             tableParent.insertBefore(div, tableParent.firstChild);
         } else {
-             // อัปเดตตัวเลข
-             btnArea.innerHTML = `
-                <button onclick="window.confirmPickupAll()" class="bg-yellow-500 text-white px-4 py-2 rounded shadow hover:bg-yellow-600 transition flex items-center gap-2">
-                    <i class="fas fa-tasks"></i> ตัดยอดทั้งหมด (${requests.length})
-                </button>
-            `;
+             // ถ้ามีปุ่มอยู่แล้ว แค่อัปเดตให้แน่ใจว่ามันโชว์
              btnArea.style.display = 'flex';
         }
     } else {
@@ -1217,16 +1222,17 @@ function renderPickupList(requests) {
         return;
     }
 
-    // Render แถวตารางปกติ
     container.innerHTML = requests.map(row => `
-        <tr class="hover:bg-yellow-50 border-b">
-            <td class="p-3 w-12"><input type="checkbox" class="pickup-checkbox h-5 w-5" data-code="${row.RequestCode}"></td>
+        <tr class="hover:bg-yellow-50 border-b cursor-pointer" onclick="const cb = this.querySelector('.pickup-checkbox'); cb.checked = !cb.checked;">
+            <td class="p-3 w-12 text-center" onclick="event.stopPropagation()">
+                <input type="checkbox" class="pickup-checkbox h-5 w-5 cursor-pointer" data-code="${row.RequestCode}">
+            </td>
             <td class="p-3">${row.ApprovalDate ? row.ApprovalDate.toLocaleDateString('th-TH') : '-'}</td>
             <td class="p-3">${row.Department}</td>
             <td class="p-3">${row.Requester}</td>
             <td class="p-3 text-sm">${row.ApprovedItems}</td>
-            <td class="p-3 text-right">
-                <button onclick="window.confirmPickup('${row.RequestCode}')" class="bg-yellow-500 text-white px-3 py-1 rounded text-xs hover:bg-yellow-600">ตัดยอด</button>
+            <td class="p-3 text-right" onclick="event.stopPropagation()">
+                <button onclick="window.confirmPickup('${row.RequestCode}')" class="bg-white border border-yellow-400 text-yellow-600 px-3 py-1 rounded text-xs hover:bg-yellow-50">ตัดยอด</button>
             </td>
         </tr>`).join('');
 }
@@ -1518,29 +1524,15 @@ function setupEventListeners() {
     });
     document.getElementById('cart-button')?.addEventListener('click', () => document.getElementById('cart-modal').classList.remove('hidden'));
     document.getElementById('open-receive-modal-btn')?.addEventListener('click', () => {
-        // 1. เคลียร์ค่าเดิม
         document.getElementById('receive-form').reset();
         document.getElementById('receive-item-list').innerHTML = '';
-        addReceiveItemRow();
+        addReceiveItemRow(); // เรียกฟังก์ชันเพิ่มแถวแรก
 
-        // 2. สร้างเลขรันอัตโนมัติ (Format: RCV-ปีเดือนวัน-ชั่วโมงนาทีวินาที)
+        // สร้างเลขรันอัตโนมัติ
         const now = new Date();
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, '0');
-        const d = String(now.getDate()).padStart(2, '0');
-        const h = String(now.getHours()).padStart(2, '0');
-        const min = String(now.getMinutes()).padStart(2, '0');
-        const s = String(now.getSeconds()).padStart(2, '0');
-        
-        const autoCode = `RCV-${y}${m}${d}-${h}${min}${s}`;
-
-        // 3. ใส่ค่าลงในช่อง Input ทันที
+        const autoCode = `RCV-${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2,'0')}${now.getDate().toString().padStart(2,'0')}-${now.getHours()}${now.getMinutes()}`;
         document.getElementById('receive-code').value = autoCode;
-        
-        // 4. ตั้งค่าวันที่ปัจจุบันให้ด้วย (เพื่อความสะดวก)
         document.getElementById('receive-date').valueAsDate = new Date();
-
-        // 5. แสดงหน้าต่าง
         document.getElementById('receive-modal').classList.remove('hidden');
     });
 
@@ -1552,7 +1544,7 @@ function setupEventListeners() {
 
     // --- 5. FORM SUBMISSIONS ---
 
-    // 5.1 Item Form (With Image Upload)
+    // 5.1 Item Form
     document.getElementById('item-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         showLoading();
@@ -1578,25 +1570,19 @@ function setupEventListeners() {
         } catch (error) { console.error(error); alert("Error: " + error.message); hideLoading(); }
     });
 
-    // 5.2 Dispense Flow (Cart -> Modal -> Signature)
+    // 5.2 Dispense Form (Standard)
     document.getElementById('confirm-dispense-btn')?.addEventListener('click', () => {
         if(confirm("ยืนยันการเบิกสินค้า?")) {
             closeModal('cart-modal');
-            
-            // 1. เตรียมข้อมูลในฟอร์ม
             document.getElementById('dispense-form').reset();
             document.getElementById('dispense-code').value = `REQ-${Date.now()}`;
             document.getElementById('dispense-date').valueAsDate = new Date();
             
-            // ใส่ชื่อผู้เบิกอัตโนมัติ (ถ้ามี User)
             if(currentUser && currentUser.displayName) {
                  document.getElementById('dispense-requester').value = currentUser.displayName;
             }
-
-            // เติมข้อมูลแผนกใน Dropdown
             populateDepartmentDropdown(departmentsCache, 'dispense-department');
             
-            // สร้างรายการสินค้าแสดงผล
             document.getElementById('dispense-item-list').innerHTML = dispenseCart.map(i => 
                 `<div class="flex justify-between text-sm border-b py-2">
                     <span>${i.name}</span>
@@ -1604,120 +1590,41 @@ function setupEventListeners() {
                 </div>`
             ).join('');
             
-            // 2. รีเซ็ตสถานะการเซ็นชื่อ
+            // Reset Signature
             const sigCheckbox = document.getElementById('signature-confirm-checkbox');
             const sigOverlay = document.getElementById('signature-overlay');
-            
             if (sigCheckbox) sigCheckbox.checked = false;
             if (sigOverlay) sigOverlay.classList.remove('hidden');
 
-            // 3. เปิด Modal
             document.getElementById('dispense-modal').classList.remove('hidden');
-            
-            // 4. 🔥 สำคัญมาก: รอให้ Modal กางสุดก่อน ค่อยสร้างกระดานเซ็น
-            setTimeout(() => {
-                signaturePad = initSignaturePad('signature-pad'); 
-            }, 300); // เพิ่มเวลาหน่วงเป็น 300ms
+            setTimeout(() => { signaturePad = initSignaturePad('signature-pad'); }, 300);
         }
     });
 
-    // --- FIX: Checkbox Toggle ---
     document.getElementById('signature-confirm-checkbox')?.addEventListener('change', (e) => {
         const overlay = document.getElementById('signature-overlay');
         if (e.target.checked) {
-            overlay.classList.add('hidden'); // ซ่อนตัวบัง
-            if(signaturePad) signaturePad.on(); // เปิดให้เซ็น
+            overlay.classList.add('hidden');
+            if(signaturePad) signaturePad.on();
         } else {
-            overlay.classList.remove('hidden'); // แสดงตัวบัง
-            if(signaturePad) {
-                signaturePad.off(); 
-                signaturePad.clear();
-            }
+            overlay.classList.remove('hidden');
+            if(signaturePad) { signaturePad.off(); signaturePad.clear(); }
         }
     });
 
-    // --- FIX: Submit Dispense Form ---
     document.getElementById('dispense-form')?.addEventListener('submit', (e) => {
         e.preventDefault();
-        
-        if (!document.getElementById('signature-confirm-checkbox').checked) { 
-            alert("กรุณาติ๊ก 'ข้าพเจ้ายืนยันการเบิก' ก่อนครับ"); 
-            return; 
-        }
-        
-        if (!signaturePad || signaturePad.isEmpty()) { 
-            alert("กรุณาเซ็นชื่อผู้เบิกด้วยครับ"); 
-            return; 
-        }
+        if (!document.getElementById('signature-confirm-checkbox').checked) { alert("กรุณาติ๊ก 'ข้าพเจ้ายืนยันการเบิก' ก่อนครับ"); return; }
+        if (!signaturePad || signaturePad.isEmpty()) { alert("กรุณาเซ็นชื่อผู้เบิกด้วยครับ"); return; }
         
         const formData = {
             requestDate: document.getElementById('dispense-date').value,
             department: document.getElementById('dispense-department').value,
             requesterName: document.getElementById('dispense-requester').value,
             items: dispenseCart.map(i => ({ itemCode: i.code, itemName: i.name, quantity: i.quantity })),
-            signatureImage: signaturePad.toDataURL() // แปลงลายเซ็นเป็นรูปภาพ
+            signatureImage: signaturePad.toDataURL()
         };
-        
         submitDispenseRequest(formData);
-    });
-
-// --- 5.5 Walk-in Flow (Admin) ---
-    document.getElementById('add-walkin-item-btn')?.addEventListener('click', addWalkInItemRow);
-    
-    // Walk-in Signature Checkbox Logic (แก้ไขใหม่)
-    document.getElementById('walkin-signature-confirm-checkbox')?.addEventListener('change', (e) => {
-        const overlay = document.getElementById('walkin-signature-overlay');
-        
-        // 1. ถ้ายังไม่มีกระดาน ให้สร้างใหม่ทันที
-        if (!walkinSignaturePad) {
-            walkinSignaturePad = initSignaturePad('walkin-signature-pad');
-        }
-        
-        if (e.target.checked) {
-            // ติ๊กถูก: ซ่อนตัวบัง และ เปิดให้เขียน
-            overlay.classList.add('hidden'); 
-            if (walkinSignaturePad) walkinSignaturePad.on();
-        } else {
-            // เอาติ๊กออก: แสดงตัวบัง, ล็อกกระดาน และล้างข้อมูล
-            overlay.classList.remove('hidden');
-            if (walkinSignaturePad) { 
-                walkinSignaturePad.off(); 
-                walkinSignaturePad.clear(); 
-            }
-        }
-    });
-
-    // ปุ่มล้างลายเซ็น (เพิ่มการทำงาน)
-    document.getElementById('walkin-clear-signature-btn')?.addEventListener('click', () => {
-        if (walkinSignaturePad) {
-            walkinSignaturePad.clear();
-        }
-    });
-
-    // Walk-in Submit (แก้ไขส่วนการดึงค่าลายเซ็น)
-    document.getElementById('walkin-form')?.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const items = Array.from(document.querySelectorAll('.walkin-item-row')).map(row => {
-            const select = row.querySelector('select');
-            const input = row.querySelector('input');
-            return { itemCode: select.value, itemName: select.options[select.selectedIndex].text, quantity: parseInt(input.value) };
-        }).filter(i => i.itemCode && i.quantity > 0);
-        
-        if(!walkinSignaturePad) walkinSignaturePad = initSignaturePad('walkin-signature-pad');
-        
-        // Validation for Walkin
-        const checkbox = document.getElementById('walkin-signature-confirm-checkbox');
-        if (checkbox && !checkbox.checked) { alert("กรุณายืนยันข้อมูลก่อนเซ็น"); return; }
-
-        const walkInData = {
-            requesterName: document.getElementById('walkin-requester').value,
-            department: document.getElementById('walkin-department').value,
-            items: items,
-            signatureImageBase64: (walkinSignaturePad && !walkinSignaturePad.isEmpty()) ? walkinSignaturePad.toDataURL() : ''
-        };
-        
-        confirmationDetails = { action: 'walkin_dispense', walkInData: walkInData };
-        openConfirmationModal('ยืนยันเบิกด่วน', 'ตัดสต็อกทันที?', 'walkin_dispense', {});
     });
 
     // 5.6 Receive Form
@@ -1755,8 +1662,7 @@ function setupEventListeners() {
         addDepartment(document.getElementById('department-name').value);
     });
     document.getElementById('add-user-form')?.addEventListener('submit', (e) => {
-        e.preventDefault(); // Prevent reload
-        // Manual Add User is tricky in Client SDK without Cloud Functions, usually rely on auto-register
+        e.preventDefault(); 
         alert("ระบบจะเพิ่มผู้ใช้ให้อัตโนมัติเมื่อพวกเขาล็อกอินครับ");
     });
     document.getElementById('adjustment-form')?.addEventListener('submit', (e) => {
@@ -1795,8 +1701,8 @@ function setupEventListeners() {
     document.getElementById('confirm-action-btn')?.addEventListener('click', () => {
         if (confirmationDetails.action === 'delete_department') deleteDepartment(confirmationDetails.departmentName);
         else if (confirmationDetails.action === 'confirm_pickup') {
-        processConfirmPickup(confirmationDetails.requestCode);
-    }
+            processConfirmPickup(confirmationDetails.requestCode);
+        }
         else if (confirmationDetails.action === 'delete_item') deleteInventoryItem(confirmationDetails.itemCode);
         else if (confirmationDetails.action === 'walkin_dispense') processWalkInDispense(confirmationDetails.walkInData);
         else if (confirmationDetails.action === 'adjust_stock') processStockAdjustment(confirmationDetails.adjData);
@@ -1810,11 +1716,8 @@ function setupEventListeners() {
         const fileInput = document.getElementById('new-user-image');
         
         let photoBase64 = null;
-
-        // ถ้ามีการเลือกไฟล์
         if (fileInput.files && fileInput.files[0]) {
             try {
-                // บีบอัดรูปก่อนส่ง
                 photoBase64 = await compressImage(fileInput.files[0]);
             } catch (error) {
                 console.error("Image Error:", error);
@@ -1822,8 +1725,6 @@ function setupEventListeners() {
                 return;
             }
         }
-
-        // เรียกฟังก์ชันบันทึกหลัก
         await setUserRole(email, role, name, photoBase64);
     };
 
@@ -1834,13 +1735,10 @@ function setupEventListeners() {
             const img = document.getElementById('image-viewer-content');
             const dlBtn = document.getElementById('image-download-btn');
             
-            // ตั้งค่ารูปภาพ
             img.src = item.AttachmentUrl;
-            dlBtn.href = item.AttachmentUrl; // ตั้งค่าลิงก์ดาวน์โหลด
+            dlBtn.href = item.AttachmentUrl;
             
-            // แสดง Modal
             modal.classList.remove('hidden');
-            // ทำ Animation Fade In
             requestAnimationFrame(() => {
                 modal.classList.remove('opacity-0');
             });
@@ -1852,10 +1750,9 @@ function setupEventListeners() {
     window.closeImageViewer = () => {
         const modal = document.getElementById('image-viewer-modal');
         modal.classList.add('opacity-0');
-        // รอ Animation จบแล้วค่อยซ่อน (300ms)
         setTimeout(() => {
             modal.classList.add('hidden');
-            document.getElementById('image-viewer-content').src = ''; // เคลียร์รูป
+            document.getElementById('image-viewer-content').src = '';
         }, 300);
     };
 }
@@ -1867,12 +1764,38 @@ function closeModal(id) { document.getElementById(id)?.classList.add('hidden'); 
 function showPage(pageId) {
     document.querySelectorAll('.page-content').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    
     const page = document.getElementById(`page-${pageId}`);
     const btn = document.querySelector(`.nav-btn[data-page='${pageId}']`);
+    
     if(page) page.classList.add('active');
     if(btn) btn.classList.add('active');
+    
     const mobileTitle = document.getElementById('mobile-page-title');
     if(mobileTitle && btn) mobileTitle.textContent = btn.textContent.trim();
+    
+    // ✅ เพิ่มส่วนนี้: ถ้าเข้าหน้า Walk-in ให้รีเซ็ตขนาด Canvas ใหม่ทันที
+    if (pageId === 'walkin') {
+        setTimeout(() => {
+            const canvas = document.getElementById('walkin-signature-pad');
+            if (canvas) {
+                // บังคับคำนวณขนาดใหม่เพราะตอนนี้หน้าเว็บแสดงผลแล้ว (display: block)
+                const ratio = Math.max(window.devicePixelRatio || 1, 1);
+                canvas.width = canvas.parentElement.clientWidth * ratio;
+                canvas.height = canvas.parentElement.clientHeight * ratio;
+                canvas.getContext("2d").scale(ratio, ratio);
+                
+                // ถ้ายังไม่ได้สร้าง Pad ให้สร้างใหม่ / ถ้ามีแล้วให้เคลียร์
+                if (!walkinSignaturePad) {
+                    walkinSignaturePad = new SignaturePad(canvas, { backgroundColor: 'rgb(255, 255, 255)' });
+                    walkinSignaturePad.off(); // เริ่มต้นล็อกไว้ก่อน (รอติ๊กถูก)
+                } else {
+                    walkinSignaturePad.clear(); // เคลียร์ของเก่า
+                }
+            }
+        }, 100); // หน่วงเวลาเล็กน้อยเพื่อให้ CSS render เสร็จก่อน
+    }
+
     if(pageId === 'stocktake') renderStockTakePage();
 }
 function convertBase64(file) {
@@ -2074,10 +1997,35 @@ function addReceiveItemRow() {
     document.getElementById('receive-item-list').appendChild(d);
 }
 function addWalkInItemRow() {
-    const d = document.createElement('div'); d.className='walkin-item-row flex gap-2 mb-2';
-    d.innerHTML = `<select class="border p-2 flex-1"><option value="">เลือกของ</option>${ppeItemsCache.map(i=>`<option value="${i.code}">${i.name}</option>`).join('')}</select><input type="number" class="border p-2 w-20" placeholder="qty"><button type="button" onclick="this.parentElement.remove()" class="text-red-500">X</button>`;
-    document.getElementById('walkin-item-list').appendChild(d);
+    const container = document.getElementById('walkin-item-list');
+    if (!container) return;
+
+    const d = document.createElement('div');
+    d.className = 'walkin-item-row flex gap-2 mb-2 items-center';
+    
+    let options = '<option value="">--เลือกของ--</option>';
+    // ตรวจสอบว่ามีข้อมูลใน Cache ไหม
+    if (ppeItemsCache && ppeItemsCache.length > 0) {
+        ppeItemsCache.forEach(i => {
+            options += `<option value="${i.code}">${i.name} (เหลือ ${i.totalQuantity})</option>`;
+        });
+    } else {
+        options += '<option value="" disabled>ไม่มีข้อมูล (ลองรีเฟรช)</option>';
+    }
+
+    d.innerHTML = `
+        <select class="border p-2 flex-1 rounded bg-gray-50 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+            ${options}
+        </select>
+        <input type="number" class="border p-2 w-20 rounded text-center" placeholder="จำนวน" min="1">
+        <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:text-red-700 p-2">
+            <i class="fas fa-trash"></i>
+        </button>
+    `;
+    container.appendChild(d);
 }
+// บรรทัดนี้สำคัญ เพื่อให้ HTML มองเห็นฟังก์ชันนี้
+window.addWalkInItemRow = addWalkInItemRow;
 
 // --- Helper: บีบอัดรูปภาพให้เล็ก (สำหรับ Avatar) ---
 function compressImage(file, maxWidth = 800, quality = 0.7) {
@@ -2210,3 +2158,293 @@ async function saveCustomNameAndContinue() {
     }
 }
 
+// ================================================== //
+// ==  ฟังก์ชันจัดการแบบเลือกรายการ (Batch Select)  == //
+// ================================================== //
+
+// 1. ฟังก์ชันอนุมัติ "เฉพาะที่ติ๊กเลือก"
+async function approveSelected() {
+    // หา Checkbox ที่ถูกติ๊กในหน้า "รออนุมัติ"
+    const checkboxes = document.querySelectorAll('.pending-checkbox:checked');
+    
+    if (checkboxes.length === 0) return alert("กรุณาเลือกรายการที่จะอนุมัติอย่างน้อย 1 รายการ");
+    
+    // ดึงรหัส Request Code ออกมา
+    const selectedCodes = Array.from(checkboxes).map(cb => cb.dataset.code);
+    
+    if (!confirm(`ยืนยันอนุมัติ ${selectedCodes.length} รายการที่เลือก?`)) return;
+
+    showLoading();
+    let successCount = 0;
+    let failCount = 0;
+
+    try {
+        const { db, doc, runTransaction } = window;
+        
+        // กรองเอาเฉพาะข้อมูล Transaction ที่ตรงกับรหัสที่เลือก
+        const targets = dispenseHistoryCache.filter(r => selectedCodes.includes(r.RequestCode));
+
+        for (const req of targets) {
+            try {
+                await runTransaction(db, async (transaction) => {
+                    const requestRef = doc(db, COLLECTIONS.TRANSACTIONS, req.id);
+                    
+                    // เช็คสต็อก
+                    const itemsToApprove = [];
+                    for (const item of req.RawItems) {
+                        const invItem = ppeItemsCache.find(i => i.code === item.itemCode || i.name === item.itemName);
+                        if (!invItem) throw new Error(`ไม่พบสินค้า ${item.itemName}`);
+                        
+                        const invRef = doc(db, COLLECTIONS.INVENTORY, invItem.id);
+                        const invDoc = await transaction.get(invRef);
+                        
+                        if (!invDoc.exists()) throw new Error("ไม่พบข้อมูลสินค้า");
+                        
+                        const currentStock = invDoc.data().totalQuantity || 0;
+                        if (currentStock < item.quantity) {
+                            throw new Error(`สินค้า ${item.itemName} ไม่พอ`);
+                        }
+
+                        // ตัดสต็อก
+                        transaction.update(invRef, { totalQuantity: currentStock - item.quantity });
+                        itemsToApprove.push(item);
+                    }
+
+                    // อัปเดตสถานะ
+                    const approvedString = itemsToApprove.map(i => `${i.itemName} (x${i.quantity})`).join(', ');
+                    transaction.update(requestRef, {
+                        status: 'Approved',
+                        approvedItemsString: approvedString,
+                        approver: currentUser.email,
+                        approvalDate: new Date()
+                    });
+                });
+                successCount++;
+            } catch (err) {
+                console.warn(`Error on ${req.RequestCode}: ${err.message}`);
+                failCount++;
+            }
+        }
+
+        alert(`✅ ดำเนินการเสร็จสิ้น\n- สำเร็จ: ${successCount}\n- ไม่สำเร็จ (ของหมด): ${failCount}`);
+        refreshAllData();
+
+    } catch (e) {
+        console.error(e);
+        alert("Error: " + e.message);
+    } finally {
+        hideLoading();
+    }
+}
+
+// 2. ฟังก์ชันตัดยอด "เฉพาะที่ติ๊กเลือก"
+async function confirmPickupSelected() {
+    // หา Checkbox ที่ถูกติ๊กในหน้า "ตัดยอด"
+    const checkboxes = document.querySelectorAll('.pickup-checkbox:checked');
+
+    if (checkboxes.length === 0) return alert("กรุณาเลือกรายการที่จะตัดยอดอย่างน้อย 1 รายการ");
+
+    const selectedCodes = Array.from(checkboxes).map(cb => cb.dataset.code);
+
+    if (!confirm(`ยืนยันตัดยอด (รับของแล้ว) จำนวน ${selectedCodes.length} รายการที่เลือก?`)) return;
+
+    showLoading();
+    try {
+        const { db, doc, updateDoc } = window; // 👈 เปลี่ยนมาใช้ updateDoc แทน
+        
+        // หา Doc ID จาก Cache โดยใช้ RequestCode ที่เลือกมา
+        const targets = dispenseHistoryCache.filter(r => selectedCodes.includes(r.RequestCode));
+        
+        // 🔥 วิธีแก้: ใช้ Promise.all เพื่ออัปเดตทุกรายการพร้อมกันโดยไม่ต้องใช้ Batch
+        const updatePromises = targets.map(req => {
+            const ref = doc(db, COLLECTIONS.TRANSACTIONS, req.id);
+            return updateDoc(ref, { status: 'Completed' });
+        });
+
+        // รอจนกว่าทุกรายการจะอัปเดตเสร็จ
+        await Promise.all(updatePromises);
+
+        alert(`✅ ตัดยอดสำเร็จ ${targets.length} รายการ`);
+        
+        // เคลียร์ Checkbox ทั้งหมดออก
+        document.querySelectorAll('.pickup-checkbox').forEach(cb => cb.checked = false);
+        
+        refreshAllData();
+
+    } catch (e) {
+        console.error(e);
+        alert("Error: " + e.message);
+    } finally {
+        hideLoading();
+    }
+}
+
+// Expose functions
+window.approveSelected = approveSelected;
+window.confirmPickupSelected = confirmPickupSelected;
+
+function addWalkInItemRow() {
+    const container = document.getElementById('walkin-item-list');
+    if (!container) return; // ถ้าหาไม่เจอให้จบการทำงาน (กัน Error)
+
+    const d = document.createElement('div'); 
+    d.className = 'walkin-item-row flex gap-2 mb-2 items-center';
+    
+    // สร้าง Dropdown สินค้าจาก Cache
+    let options = '<option value="">--เลือกของ--</option>';
+    if (ppeItemsCache && ppeItemsCache.length > 0) {
+        ppeItemsCache.forEach(i => {
+            options += `<option value="${i.code}">${i.name} (คงเหลือ ${i.totalQuantity})</option>`;
+        });
+    } else {
+        options += '<option value="" disabled>ไม่มีข้อมูลสินค้า</option>';
+    }
+
+    d.innerHTML = `
+        <select class="border p-2 flex-1 rounded bg-gray-50 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+            ${options}
+        </select>
+        <input type="number" class="border p-2 w-20 rounded text-center" placeholder="จำนวน" min="1">
+        <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:text-red-700 p-2">
+            <i class="fas fa-trash"></i>
+        </button>
+    `;
+    container.appendChild(d);
+}
+// บรรทัดนี้สำคัญมาก! เพื่อให้ HTML เรียก onclick="..." ได้
+window.addWalkInItemRow = addWalkInItemRow;
+
+// ==========================================
+// == 🔥 GLOBAL WALKIN FUNCTIONS (วางล่างสุดของไฟล์) 🔥 ==
+// ==========================================
+
+// 1. ฟังก์ชันจัดการ Checkbox และ Signature (ทำงานชัวร์ 100%)
+window.handleWalkinToggle = function(checkbox) {
+    const overlay = document.getElementById('walkin-signature-overlay');
+    const canvas = document.getElementById('walkin-signature-pad');
+    
+    if (checkbox.checked) {
+        // ✅ 1. ซ่อนตัวบัง (ใช้ style โดยตรงเพื่อความชัวร์)
+        if(overlay) overlay.style.display = 'none';
+
+        // ✅ 2. ปรับขนาด Canvas ทันที
+        if (canvas) {
+            const ratio = Math.max(window.devicePixelRatio || 1, 1);
+            canvas.width = canvas.offsetWidth * ratio;
+            canvas.height = canvas.offsetHeight * ratio;
+            canvas.getContext("2d").scale(ratio, ratio);
+        }
+
+        // ✅ 3. สร้าง/เปิดใช้งาน Pad
+        if (!walkinSignaturePad && canvas) {
+            walkinSignaturePad = new SignaturePad(canvas, { 
+                backgroundColor: 'rgba(255, 255, 255, 0)',
+                penColor: 'rgb(0, 0, 0)'
+            });
+        }
+        
+        if (walkinSignaturePad) {
+            walkinSignaturePad.clear(); // ล้างของเก่า
+            walkinSignaturePad.on();    // เปิดให้เขียน
+        }
+
+    } else {
+        // ❌ ยกเลิก: แสดงตัวบัง และ ล็อก Pad
+        if(overlay) overlay.style.display = 'flex';
+        if (walkinSignaturePad) {
+            walkinSignaturePad.off();
+            walkinSignaturePad.clear();
+        }
+    }
+};
+
+// 2. ฟังก์ชันเพิ่มรายการสินค้า (Walk-in)
+window.addWalkInItemRow = function() {
+    const container = document.getElementById('walkin-item-list');
+    if (!container) return;
+
+    const d = document.createElement('div'); 
+    d.className = 'walkin-item-row flex gap-2 mb-2 items-center';
+    
+    // สร้าง Dropdown สินค้าจาก Cache
+    let options = '<option value="">--เลือกของ--</option>';
+    if (typeof ppeItemsCache !== 'undefined' && ppeItemsCache.length > 0) {
+        ppeItemsCache.forEach(i => {
+            options += `<option value="${i.code}">${i.name} (คงเหลือ ${i.totalQuantity})</option>`;
+        });
+    } else {
+        options += '<option value="" disabled>กำลังโหลดข้อมูล...</option>';
+    }
+
+    d.innerHTML = `
+        <select class="border p-2 flex-1 rounded bg-gray-50 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+            ${options}
+        </select>
+        <input type="number" class="border p-2 w-20 rounded text-center" placeholder="จำนวน" min="1">
+        <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:text-red-700 p-2">
+            <i class="fas fa-trash"></i>
+        </button>
+    `;
+    container.appendChild(d);
+};
+
+// ==========================================
+// == 🔥 ฟังก์ชันกดยืนยัน Walk-in (วางล่างสุดของไฟล์ app.js) 🔥 ==
+// ==========================================
+
+window.submitWalkinForm = function() {
+    console.log("🚀 กำลังกดปุ่มยืนยัน Walk-in...");
+
+    // 1. ดึงค่าจาก Input ต่างๆ
+    const requester = document.getElementById('walkin-requester').value.trim();
+    const department = document.getElementById('walkin-department').value;
+    
+    // 2. ตรวจสอบข้อมูลพื้นฐาน
+    if (!requester) return alert("❌ กรุณาระบุชื่อผู้เบิก");
+    if (!department) return alert("❌ กรุณาเลือกแผนก");
+
+    // 3. ดึงรายการสินค้า
+    const items = [];
+    document.querySelectorAll('.walkin-item-row').forEach(row => {
+        const select = row.querySelector('select');
+        const input = row.querySelector('input');
+        if (select && input && select.value && input.value > 0) {
+            items.push({
+                itemCode: select.value,
+                itemName: select.options[select.selectedIndex].text.split(' (')[0], // ตัดวงเล็บยอดคงเหลือออก
+                quantity: parseInt(input.value)
+            });
+        }
+    });
+
+    if (items.length === 0) return alert("❌ กรุณาเลือกสินค้าและระบุจำนวนอย่างน้อย 1 รายการ");
+
+    // 4. ตรวจสอบ Checkbox ยืนยัน
+    const checkbox = document.getElementById('walkin-signature-confirm-checkbox');
+    if (!checkbox.checked) return alert("❌ กรุณาติ๊ก 'ข้าพเจ้ายืนยันข้อมูลถูกต้อง' ก่อนครับ");
+
+    // 5. ตรวจสอบลายเซ็น
+    if (!walkinSignaturePad || walkinSignaturePad.isEmpty()) {
+        return alert("❌ กรุณาเซ็นชื่อด้วยครับ");
+    }
+
+    // ✅ ข้อมูลครบถ้วน! เตรียมส่งไปตัดสต็อก
+    const walkInData = {
+        requesterName: requester,
+        department: department,
+        items: items,
+        signatureImageBase64: walkinSignaturePad.toDataURL() // แปลงลายเซ็นเป็นรูปภาพ
+    };
+
+    console.log("📦 Data Ready:", walkInData);
+
+    // เรียก Modal ยืนยัน (เพื่อให้ processWalkInDispense ทำงานต่อ)
+    // หมายเหตุ: ต้องมั่นใจว่าตัวแปร confirmationDetails และ openConfirmationModal เข้าถึงได้
+    if (typeof confirmationDetails !== 'undefined' && typeof openConfirmationModal === 'function') {
+        confirmationDetails = { action: 'walkin_dispense', walkInData: walkInData };
+        openConfirmationModal('ยืนยันเบิกด่วน', 'ตัดสต็อกทันทีใช่หรือไม่?', 'walkin_dispense', {});
+    } else {
+        // Fallback: ถ้า Modal ไม่ทำงาน ให้เรียกฟังก์ชันประมวลผลเลย
+        processWalkInDispense(walkInData);
+    }
+};
